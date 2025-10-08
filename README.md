@@ -2,11 +2,12 @@
 
 ## Inhaltsverzeichnis
 
+- [Grundwissen](#grundwissen)
 - [ROS2 Installation](#ros2-installation)
 - [Igus Installation](#igus-rebel-roboterarm-installation)
 - [Kamera Installation](#realsense-kamera-installation)
 
-## ROS2 Installation
+## Grundwissen
 
 ### Pakete
 Für Ubuntu Noble (24.04) gibt es [Debian Pakete](https://de.wikipedia.org/wiki/Debian-Paket) (Wikipedia) für ROS2 Jazzy Jalisco.
@@ -17,6 +18,8 @@ Im Gegensatz zu Windows wird hier keine .exe-Datei runtergeladen und ausgeführt
 Noble und Jazzy Jalisco sind Namen für die jeweiligen Versionen von Ubuntu oder ROS2. So gibt es zum Beispiel ROS2 Versionen die Iron Irwini, Humble Hawksbill oder Foxy Fitzroy heißen und Ubuntu Versionen, die Trusty Tahr (14.04) oder Bionic Beaver (18.04) heißen. Jazzy Jalisco wird von Mai 2024 bis Mai 2029 gepflegt. Kilted Kaiju bis November 26 und Rolling Ridley von Juni 2020 bis "Ongoing".
 
 Wir nutzen hier Jazzy, da die verwendeten ROS2-Pakete unter Jazzy getestet sind.
+
+## ROS2 Installation
 
 ## Schritt 1
 
