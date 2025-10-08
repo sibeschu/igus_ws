@@ -50,7 +50,7 @@ Mit `locale` überprüfen wir erneut die aktuelle Einstellung.
 
 #### Erforderliche Verzeichnisse aktivieren
 
-Zuerst gehen wir sicher, dass das Ubuntu Universe [Verzeichnis](https://help.ubuntu.com/community/Repositories/Ubuntu) (Ubuntu Dokumentation: Repositories) aktiviert ist.
+Zuerst gehen wir sicher, dass das Ubuntu Universe Verzeichnis aktiviert ist. (Mehr über [Verzeichnisse/Repositories](https://help.ubuntu.com/community/Repositories/Ubuntu))
 
 ```bash
 sudo apt install software-properties-common
