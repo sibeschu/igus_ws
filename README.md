@@ -13,7 +13,7 @@ Bitte lesen Sie genau und vollständig. Dieser Text beinhaltet einige Linuxbefeh
 ```bash
 in einem Code-Fenster angezeigt werden.
 ```
-.
+Meistens sind beide Formatierungen gleich wichtig.
 
 ## Grundwissen
 
