@@ -85,6 +85,24 @@ Wir installieren nun ROS, RViz, demos und tutorials mit
 sudo apt install ros-jazzy-desktop
 ```
 
+Um unsere ROS2 Entwicklungsumgebung zu aktivieren schreiben wir `source /opt/ros/jazzy/setup.bash`. 
+
+Um die Installation zu verifizieren geben wir `ros2 run demo_nodes_cpp talker` ein.
+Wir sollten nun Nachrichten wie diese sehen:
+```bash
+[INFO] [1760010581.519717306] [talker]: Publishing: 'Hello World: 1'
+[INFO] [1760010582.519676343] [talker]: Publishing: 'Hello World: 2'
+```
+
+Wenn wir diesen Output sehen, öffnen wir ein neues Terminal mit <kbd>STRG</kbd> + <kbd>ALT</kbd> + <kbd>T</kbd> und geben diesmal `ros2 run demo_nodes_py listener` ein.
+Wir sollten in diesem zweiten Terminal nun Nachrichten wie diese sehen:
+```bash
+[INFO] [1760010764.592431582] [listener]: I heard: [Hello World: 5]
+[INFO] [1760010765.584406703] [listener]: I heard: [Hello World: 6]
+```
+
+
+
 ## Igus-Rebel Roboterarm Installation
 
 ## RealSense Kamera Installation
