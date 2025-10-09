@@ -7,6 +7,14 @@
 - [Igus Installation](#igus-rebel-roboterarm-installation)
 - [Kamera Installation](#realsense-kamera-installation)
 
+## Hinweis
+
+Bitte lesen Sie genau und vollständig. Dieser Text beinhaltet einige Linuxbefehle die `im Text` vorkommen und einige die
+```bash
+in einem Code-Fenster angezeigt werden.
+```
+.
+
 ## Grundwissen
 
 ### Pakete
@@ -85,7 +93,7 @@ Wir installieren nun ROS, RViz, demos und tutorials mit
 sudo apt install ros-jazzy-desktop
 ```
 
-Um unsere ROS2 Entwicklungsumgebung zu aktivieren schreiben wir `source /opt/ros/jazzy/setup.bash`. 
+Um unsere ROS2 Entwicklungsumgebung zu aktivieren schreiben wir `source /opt/ros/jazzy/setup.bash`.
 
 Um die Installation zu verifizieren geben wir `ros2 run demo_nodes_cpp talker` ein.
 Wir sollten nun Nachrichten wie diese sehen:
