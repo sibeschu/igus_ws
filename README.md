@@ -48,13 +48,41 @@ sicherstellen.
 
 Mit `locale` überprüfen wir erneut die aktuelle Einstellung.
 
-#### Erforderliche Verzeichnisse aktivieren
+#### Erforderliche Repositories
 
 Zuerst gehen wir sicher, dass das Ubuntu Universe Verzeichnis aktiviert ist. (Mehr über [Verzeichnisse/Repositories](https://help.ubuntu.com/community/Repositories/Ubuntu))
 
 ```bash
 sudo apt install software-properties-common
 sudo add-apt-repository universe
+```
+
+Wir installieren ros2-apt-source Pakete. Diese konfigurieren ROS2 Verzeichnisse für unser System. Updates werden dann automatisch angezeigt, wenn neue Versionen für unsere Pakete veröffentlicht werden. Die Installation der ros2-apt-source Pakete erfolgt so:
+
+```bash
+sudo apt update && sudo apt install curl -y
+export ROS_APT_SOURCE_VERSION=$(curl -s https://api.github.com/repos/ros-infrastructure/ros-apt-source/releases/latest | grep -F "tag_name" | awk -F\" '{print $4}')
+curl -L -o /tmp/ros2-apt-source.deb "https://github.com/ros-infrastructure/ros-apt-source/releases/download/${ROS_APT_SOURCE_VERSION}/ros2-apt-source_${ROS_APT_SOURCE_VERSION}.$(. /etc/os-release && echo ${UBUNTU_CODENAME:-${VERSION_CODENAME}})_all.deb"
+sudo dpkg -i /tmp/ros2-apt-source.deb
+```
+
+Da wir später ROS2 Pakete bauen wollen, installieren wir auch die entsprechenden Entwicklungswerkzeuge.
+
+```bash
+sudo apt update && sudo apt install ros-dev-tools
+```
+
+## Schritt 2
+### Installation
+
+Mit `sudo apt update`aktualisieren wir unseren "Repository cache". (Diesen Befehl haben wir bereits mehrfach verwendet, aber falls bei diesem Schritt eingestiegen wird steht er hier erneut.)
+
+Bevor wir ROS2 installieren updaten wir unsere Systemdateien mit `sudo apt upgrade`.
+
+Wir installieren nun ROS, RViz, demos und tutorials mit
+
+```bash
+sudo apt install ros-jazzy-desktop
 ```
 
 ## Igus-Rebel Roboterarm Installation
