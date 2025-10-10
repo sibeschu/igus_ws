@@ -116,7 +116,7 @@ Wir sollten in diesem zweiten Terminal nun Nachrichten wie diese sehen:
 
 Falls es zu Problemen kommt oder etwas nicht funktioniert kann die offizielle Dokumentation helfen: [Jazzy Jalisco Installation](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html)
 
-## Anlegen eines eigenen Workspaces
+### Anlegen eines eigenen Workspaces
 
 Da wir mit unser Projekt mit Colcon bauen wollen, müssen wir dies auch installieren mit:
 
@@ -127,10 +127,10 @@ sudo apt install python3-colcon-common-extensions
 Nun legen wir unseren eigenen ROS2 Workspace an. Dafür geben wir ein:
 (Wir befinden uns im ~/ Ordner)
 ```bash
-mkdir -p ~/ros2_ws/src
+mkdir -p ~/ROS2-Igus-Einfuehrung-Robotik/src
 ```
 
-mit `cd ~/ros2_ws/src` wechseln wir in das neu angelegte Verzeichnis.
+mit `cd ~/ROS2-Igus-Einfuehrung-Robotik/src` wechseln wir in das neu angelegte Verzeichnis.
 
 Jetzt wollen wir unseren src-Ordner mit den entsprechenden Repositories füllen.
 Dafür nutzen wir
@@ -139,7 +139,7 @@ git clone PLATZHALTER
 ```
 
 ```bash
-cd ~/ros2_ws
+cd ~/ROS2-Igus-Einfuehrung-Robotik
 ```
 
 Wir bauen unseren Workspace, aus dem Workspace-Ordner heraus, mit
@@ -152,7 +152,62 @@ Unsere Ordnerstruktur sollte jetzt so aussehen:
 ORDNERSTRUKTUR
 ## Igus-Rebel Roboterarm Installation
 
+## Schritt 1
 
+Das ROS2 Paket für den Igus Rebel von Truphysics kann momentan nur genutzt werden indem es "from source" gebaut wird.
 
+```bash
+cd ROS2-Igus-Einfuehrung-Robotik/src
+git clone https://bitbucket.org/truphysics/igus_rebel_ros2.git
+cd ..
+rosdep install --from-paths . --ignore-src -r -y
+colcon build
+```
+
+Die IP des Roboterarms wird in `src/igus_rebel/include/Rebel.hpp`angegeben mit `192.168.3.11:3920`. Für unser Projekt funktioniert das, sollte die IP sich aber mal ändern, kann man sie dort anpassen.
+
+### Nutzung
+
+#### Auf einem realen Igus Rebel Arm :
+
+Hardware Interface Controler um mit dem Roboter zu kommunizieren.
+```bash
+ros2 launch igus_rebel rebel.launch.py
+```
+
+Moveit Motion Planner und "teleoperation mode" um den Roboter zu steuern.
+```bash
+ros2 launch igus_rebel_moveit_config igus_rebel_motion_planner.launch.py use_gui:=true
+```
+#### In einer Simulation :
+
+Simulation und Kontrolle des Robotermodels in Gazebo.
+```bash
+ros2 launch igus_rebel_moveit_config igus_rebel_simulated.launch.py
+```
+
+#### Digitale Outputs setzen
+
+Die digitalen Ausgänge des Roboterarms können mit Aufrufen eines ROS2 Services genutzt werden.
+Der Service heißt `/set_digital_output`.
+
+Dieser braucht einen Input als `DigitalOutput`Nachrichtentyp, die wie folgt aussieht:
+```bash
+int8 output # index vom Output dessen Status gesetzt werden soll
+bool is_on # der Status der gesetzt werden soll (True/False = an/aus)
+```
+
+Die Serviceantwort (Service output) ist immer
+```bash
+bool success # immer "True"
+string message # Immer leer
+```
+
+#### Bedienung mit einer Tastatur :
+```bash
+ros2 run igus_rebel_moveit_config rebel_servo_teleop_keyboard
+```
+
+Um den TCP (Tool Center Point) im "World Frame" zu steuern, benutzen wir <KBD>W</KBD> und <KBD>T</KBD>. Dann nutzen wir <KBD>.</KBD> und <KBD>;</KBD>, um den TCP vorwärts, rückwärts, nach links, nach rechts, nach unten,oder nach oben zu bewegen.
 
 ## RealSense Kamera Installation
