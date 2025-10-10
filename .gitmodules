@@ -1,3 +1,7 @@
 [submodule "src/igus_rebel_ros2"]
 	path = src/igus_rebel_ros2
 	url = https://bitbucket.org/truphysics/igus_rebel_ros2.git
+[submodule "src/realsense_ros"]
+	path = src/realsense_ros
+	url = https://github.com/IntelRealSense/realsense-ros.git
+	branch = ros2-master
