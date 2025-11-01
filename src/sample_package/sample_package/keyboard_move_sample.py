@@ -1,286 +1,345 @@
+#!/usr/bin/env python3
+"""
+KeyboardMoveSample ROS2 Node mit Curses UI
+
+Dieser Node erlaubt die Steuerung eines Roboters über die Tastatur direkt
+im Terminal. Die Studierenden sollen nachvollziehen, wie ROS2, Publisher,
+Service-Clients und eine curses-basierte UI zusammenwirken.
+
+Ablauf:
+
+1. Initialisierung:
+   - Node wird erstellt (`KeyboardMoveSample`).
+   - Publisher für `TwistStamped` (/delta_twist_cmds) und `JointJog` (/delta_joint_cmds) werden erzeugt.
+   - Service-Client für `/servo_node/switch_command_type` wird erstellt, um den
+     Servo-Modus (Joint oder Twist) zu setzen.
+   - Timer für kontinuierliche Bewegung wird gestartet (10 Hz).
+
+2. Curses UI:
+   - Läuft im Hauptthread und liest Tastatureingaben non-blocking.
+   - Pfeiltasten, Home/End und 1-6 werden erkannt.
+   - PageUp/PageDown ändern die Geschwindigkeit.
+   - 'm' toggelt zwischen Joint- und Twist-Modus.
+   - Leertaste löst Notfall-Stop aus.
+   - ESC beendet die Steuerung.
+   - UI zeigt Node-Name, aktuellen Modus, ausgewähltes Gelenk, Velocity, aktive Tasten
+     und die Topics, an die gepublished wird.
+
+3. Bewegung:
+   - Timer-Callback prüft aktuell gedrückte Tasten (`active_keys`) und sendet
+     entsprechende Joint- oder Twist-Kommandos.
+   - Bei keinem Tastendruck werden keine Bewegungen ausgeführt.
+   - Stop-Methoden senden wiederholt 0-Befehle für Sicherheit.
+
+4. Moduswechsel:
+   - Beim Umschalten zwischen Joint- und Twist-Modus wird der ServoCommandType
+     über den Service-Client gesetzt (0=JOINT_JOG, 1=TWIST).
+
+5. Cleanup:
+   - Bei Beenden (ESC oder Ctrl+C) werden alle Bewegungen gestoppt.
+   - Node wird sauber heruntergefahren.
+
+Das Skript verknüpft so ROS2-Programmierung, Echtzeit-UI im Terminal
+und Tastatureingaben zu einer übersichtlichen Steuerung.
+
+"""
+
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import TwistStamped
 from control_msgs.msg import JointJog
-from std_srvs.srv import SetBool
-from pynput import keyboard
-import sys
-import termios
-import tty
+from moveit_msgs.srv import ServoCommandType
+
+import curses
 import threading
-import os
-import select
 import time
+from typing import Dict, Set
+
+KEY_HOLD_TIMEOUT = 0.2      # Sekunden, wie lange eine Taste als gehalten gilt
+STATUS_REFRESH = 0.1        # Sekunden zwischen UI-Aktualisierungen
+MOVEMENT_TIMER_PERIOD = 0.0002 # Sekunden für kontinuierliche Bewegungsupdates (50 Hz)
+
 
 class KeyboardMoveSample(Node):
     def __init__(self):
-        super().__init__('keyboard_control')
-        
-        # Publishers
-        self.twist_pub = self.create_publisher(TwistStamped, '/delta_twist_cmds', 10)
-        self.joint_pub = self.create_publisher(JointJog, '/delta_joint_cmds', 10)
-        
-        # Mode switching service client
-        self.mode_client = self.create_client(SetBool, '/servo_node/switch_command_type')
-        
-        # State variables
-        self.joint_mode = True  # True for joint mode, False for twist mode
-        self.selected_joint = 0  # 0-5 for joints 1-6
+        super().__init__('keyboard_control_curses')
+
+        # Publisher
+        self.twist_topic = '/delta_twist_cmds'
+        self.joint_topic = '/delta_joint_cmds'
+        self.twist_pub = self.create_publisher(TwistStamped, self.twist_topic, 10)
+        self.joint_pub = self.create_publisher(JointJog, self.joint_topic, 10)
+
+        # Steuerungszustand
+        self.joint_mode = True  # True=Joint, False=Twist
+        self.selected_joint = 0
         self.velocity = 0.01
-        self.active_keys = set()
-        
-        # Joint names
+
+        # aktive Tasten: keycode -> letzter Timestamp
+        self.active_keys: Dict[int, float] = {}
+        self.ak_lock = threading.Lock()
+
+        # Joint-Namen
         self.joint_names = [f'joint{i+1}' for i in range(6)]
+
+        # Timer für kontinuierliche Bewegung
+        self.movement_timer = self.create_timer(MOVEMENT_TIMER_PERIOD, self.movement_callback)
+
+        # Service-Client für ServoCommandType
+        self.mode_client = self.create_client(ServoCommandType, '/servo_node/switch_command_type')
         
-        # Create a timer for continuous movement
-        self.movement_timer = self.create_timer(0.1, self.movement_callback)  # 10Hz update rate
-        
-        # Set up keyboard listener with focus on terminal
-        listener = keyboard.Listener(
-            on_press=self.on_press,
-            on_release=self.on_release,
-            suppress=True  # This will capture all keyboard events when focused
-        )
-        listener.start()
+        # Initialen Modus setzen
+        self.set_command_type(0 if self.joint_mode else 1)
 
-    def keyboard_listener(self):
-        with keyboard.Listener(
-            on_press=self.on_press,
-            on_release=self.on_release) as listener:
-            listener.join()
+    # ---------- Tastenerfassung ----------
+    def key_seen(self, key_code: int):
+        """Speichert eine erkannte Taste mit aktuellem Timestamp."""
+        with self.ak_lock:
+            self.active_keys[key_code] = time.monotonic()
 
-    def on_press(self, key):
-        try:
-            if key not in self.active_keys:
-                self.active_keys.add(key)
-                self.get_logger().info(f'Key pressed: {key}')  # Add this debug line
-                self.handle_key_press(key)
-        except Exception as e:
-            self.get_logger().error(f'Error handling key press: {e}')
+    def keys_current(self) -> Set[int]:
+        """Gibt aktuell als gehalten betrachtete Tasten zurück."""
+        with self.ak_lock:
+            now = time.monotonic()
+            keys = {k for k, t in self.active_keys.items() if now - t <= KEY_HOLD_TIMEOUT}
+            # Stale Tasten entfernen
+            for k, t in list(self.active_keys.items()):
+                if now - t > KEY_HOLD_TIMEOUT:
+                    del self.active_keys[k]
+            return keys
 
-    def on_release(self, key):
-        try:
-            self.active_keys.discard(key)
-            if not self.active_keys:  # Only stop if no keys are pressed
-                self.stop_movement()
-        except Exception as e:
-            self.get_logger().error(f'Error handling key release: {e}')
+    def clear_keys(self):
+        with self.ak_lock:
+            self.active_keys.clear()
 
-    def handle_key_press(self, key):
-        if key == keyboard.Key.space:
-            self.emergency_stop()
+    # ---------- Bewegung ----------
+    def set_command_type(self, cmd_type: int):
+        if not self.mode_client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().error("Servo switch_command_type service not available")
+            return
+        req = ServoCommandType.Request()
+        req.command_type = cmd_type
+        future = self.mode_client.call_async(req)
+        rclpy.spin_until_future_complete(self, future)
+        if future.result() is not None:
+            self.get_logger().info(f"Command type set to {cmd_type}")
+        else:
+            self.get_logger().error(f"Failed to set command type: {future.exception()}")
+
+    def movement_callback(self):
+        """Sendet Joint- oder Twist-Kommandos basierend auf gedrückten Tasten."""
+        keys = self.keys_current()
+        if not keys:
             return
 
-        if key == keyboard.Key.page_up:
-            self.velocity += 0.01
-            self.print_state()
-            return
-        elif key == keyboard.Key.page_down:
-            self.velocity = max(0.01, self.velocity - 0.01)  # Prevent negative velocity
-            self.print_state()
-            return
+        if self.joint_mode:
+            for k in keys:
+                if k == curses.KEY_UP:
+                    self.move_joint(self.selected_joint, self.velocity)
+                elif k == curses.KEY_DOWN:
+                    self.move_joint(self.selected_joint, -self.velocity)
+        else:
+            msg = TwistStamped()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.header.frame_id = 'base_link'
+            lx = ly = lz = 0.0
+            for k in keys:
+                if k == curses.KEY_UP:
+                    lx += self.velocity
+                elif k == curses.KEY_DOWN:
+                    lx -= self.velocity
+                elif k == curses.KEY_LEFT:
+                    ly += self.velocity
+                elif k == curses.KEY_RIGHT:
+                    ly -= self.velocity
+                elif k == curses.KEY_HOME:
+                    lz += self.velocity
+                elif k == curses.KEY_END:
+                    lz -= self.velocity
+            msg.twist.linear.x = lx
+            msg.twist.linear.y = ly
+            msg.twist.linear.z = lz
+            if lx or ly or lz:
+                self.twist_pub.publish(msg)
 
-        if hasattr(key, 'char'):
-            if key.char in '123456':
-                self.selected_joint = int(key.char) - 1
-                self.print_state()
-            elif key.char == 'm':
-                self.toggle_mode()
-                return
-
-    def handle_joint_movement(self, key):
-        if key == keyboard.Key.up:
-            self.move_joint(self.selected_joint, self.velocity)
-        elif key == keyboard.Key.down:
-            self.move_joint(self.selected_joint, -self.velocity)
-
-    def handle_twist_movement(self, key):
-        msg = TwistStamped()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'base_link'
-
-        if key == keyboard.Key.up:
-            msg.twist.linear.x = self.velocity
-        elif key == keyboard.Key.down:
-            msg.twist.linear.x = -self.velocity
-        elif key == keyboard.Key.left:
-            msg.twist.linear.y = self.velocity
-        elif key == keyboard.Key.right:
-            msg.twist.linear.y = -self.velocity
-        elif key == keyboard.Key.home:  # Changed from page_up
-            msg.twist.linear.z = self.velocity
-        elif key == keyboard.Key.end:   # Changed from page_down
-            msg.twist.linear.z = -self.velocity
-
-        self.twist_pub.publish(msg)
-
-    def move_joint(self, joint_idx, velocity):
+    def move_joint(self, joint_idx: int, velocity: float):
         msg = JointJog()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "base_link"
         msg.joint_names = [self.joint_names[joint_idx]]
         msg.velocities = [velocity]
-        msg.duration = 0.0  # continuous motion
+        msg.duration = 0.0
         self.joint_pub.publish(msg)
 
-    def stop_movement(self):
-        if self.joint_mode:
+    def stop_all(self):
+        """Sendet Stop-Befehle für alle Gelenke und Twist."""
+        for j in range(len(self.joint_names)):
             msg = JointJog()
             msg.header.stamp = self.get_clock().now().to_msg()
             msg.header.frame_id = "base_link"
-            msg.joint_names = [self.joint_names[self.selected_joint]]
+            msg.joint_names = [self.joint_names[j]]
             msg.velocities = [0.0]
             msg.duration = 0.0
-            # Publish stop command multiple times to ensure it's received
-            for _ in range(3):
+            for _ in range(2):
                 self.joint_pub.publish(msg)
-                self.get_clock().sleep_for(rclpy.duration.Duration(seconds=0.01))
-        else:
-            msg = TwistStamped()
-            msg.header.stamp = self.get_clock().now().to_msg()
-            msg.header.frame_id = 'base_link'
-            # Publish stop command multiple times to ensure it's received
-            for _ in range(3):
-                self.twist_pub.publish(msg)
-                self.get_clock().sleep_for(rclpy.duration.Duration(seconds=0.01))
+
+        tmsg = TwistStamped()
+        tmsg.header.stamp = self.get_clock().now().to_msg()
+        tmsg.header.frame_id = 'base_link'
+        for _ in range(2):
+            self.twist_pub.publish(tmsg)
 
     def emergency_stop(self):
-        self.get_logger().warn("EMERGENCY STOP!")
-        self.stop_movement()
-        # Add a small delay to ensure stop commands are processed
-        self.get_clock().sleep_for(rclpy.duration.Duration(seconds=0.1))
+        self.get_logger().warn("EMERGENCY STOP triggered (keyboard).")
+        self.stop_all()
 
     def toggle_mode(self):
+        """Wechselt zwischen Joint- und Twist-Modus und setzt ServoCommandType."""
         self.joint_mode = not self.joint_mode
-        req = SetBool.Request()
-        req.data = self.joint_mode
-        self.mode_client.call_async(req)
-        self.print_state()
+        cmd_type = 0 if self.joint_mode else 1
+        self.set_command_type(cmd_type)
 
-    def print_state(self):
+    # ---------- UI Status ----------
+    def get_status(self) -> Dict:
+        """Gibt aktuelle Statusinfos für die UI zurück."""
         mode = "JOINT" if self.joint_mode else "TWIST"
         joint = f"joint{self.selected_joint + 1}" if self.joint_mode else "N/A"
-        
-        # Clear screen
-        os.system('clear')
-        
-        # Print header
-        print("\033[1m" + "=== Roboter Tastatur-Steuerung aktiv ===" + "\033[0m")
-        print("Drücken Sie Strg+C zum Beenden\n")
-        
-        # Print current status with colors
-        print("\033[1m=== Aktuelle Einstellungen ===\033[0m")
-        print(f"Modus: \033[92m{mode}\033[0m")
-        print(f"Ausgewähltes Gelenk: \033[92m{joint}\033[0m")
-        print(f"Geschwindigkeit: \033[92m{self.velocity:.3f}\033[0m")
-        
-        # Print controls
-        print("\n\033[1m=== Steuerung ===\033[0m")
-        print("Pfeiltasten: Bewegung")
-        print("Leertaste: Notfall-Stop")
-        print("m: Modus wechseln (Joint/Twist)")
-        print("1-6: Joint auswählen")
-        print("Bild auf/ab: Geschwindigkeit anpassen")
-        
-        # Print active keys if any
-        if self.active_keys:
-            print("\n\033[1m=== Aktive Tasten ===\033[0m")
-            for key in self.active_keys:
-                print(f"- {key}")
-            
-        self.get_logger().debug(f"Mode: {mode}, Selected Joint: {joint}, Velocity: {self.velocity}")
+        with self.ak_lock:
+            active = list(self.active_keys.keys())
+        return {
+            "node_name": self.get_name(),
+            "mode": mode,
+            "selected_joint": joint,
+            "velocity": self.velocity,
+            "active_keys": active,
+            "publishes": [self.joint_topic, self.twist_topic],
+        }
 
-    def movement_callback(self):
-        """Timer callback to handle continuous movement"""
-        if not self.active_keys:
-            return
 
-        for key in self.active_keys:
-            if self.joint_mode:
-                if key == keyboard.Key.up:
-                    self.move_joint(self.selected_joint, self.velocity)
-                elif key == keyboard.Key.down:
-                    self.move_joint(self.selected_joint, -self.velocity)
-            else:
-                msg = TwistStamped()
-                msg.header.stamp = self.get_clock().now().to_msg()
-                msg.header.frame_id = 'base_link'
+# ---------- Curses UI ----------
+def curses_main(stdscr, node: KeyboardMoveSample):
+    curses.curs_set(0)
+    stdscr.nodelay(True)
+    stdscr.keypad(True)
+    stdscr.clear()
 
-                if key == keyboard.Key.up:
-                    msg.twist.linear.x = self.velocity
-                elif key == keyboard.Key.down:
-                    msg.twist.linear.x = -self.velocity
-                elif key == keyboard.Key.left:
-                    msg.twist.linear.y = self.velocity
-                elif key == keyboard.Key.right:
-                    msg.twist.linear.y = -self.velocity
-                elif key == keyboard.Key.home:
-                    msg.twist.linear.z = self.velocity
-                elif key == keyboard.Key.end:
-                    msg.twist.linear.z = -self.velocity
+    def header(text, line=0):
+        stdscr.attron(curses.A_BOLD)
+        stdscr.addstr(line, 2, text)
+        stdscr.attroff(curses.A_BOLD)
 
-                if any([msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z]):
-                    self.twist_pub.publish(msg)
+    last_status_update = 0.0
+    try:
+        while rclpy.ok():
+            now = time.time()
+            k = stdscr.getch()
 
-    def cleanup_before_exit(self):
-        """Call this before switching to MoveIt control"""
-        self.emergency_stop()
-        # Switch back to trajectory control mode if needed
-        if not self.joint_mode:
-            req = SetBool.Request()
-            req.data = True  # True for joint trajectory mode
-            self.mode_client.call_async(req)
-            # Wait for mode switch to complete
-            self.get_clock().sleep_for(rclpy.duration.Duration(seconds=0.5))
+            if k != -1:
+                if k == 27:
+                    break
+                elif k == curses.KEY_PPAGE:
+                    node.velocity += 0.01
+                elif k == curses.KEY_NPAGE:
+                    node.velocity = max(0.001, node.velocity - 0.01)
+                elif k in (ord('m'), ord('M')):
+                    node.toggle_mode()
+                elif k in (ord('1'), ord('2'), ord('3'), ord('4'), ord('5'), ord('6')):
+                    node.selected_joint = int(chr(k)) - 1
+                elif k == ord(' '):
+                    node.emergency_stop()
+                    node.clear_keys()
+                else:
+                    node.key_seen(k)
+
+            if now - last_status_update >= STATUS_REFRESH:
+                status = node.get_status()
+                stdscr.erase()
+                header("=== Roboter Tastatur-Steuerung ===", 0)
+                stdscr.addstr(2, 2, f"Node: {status['node_name']}")
+                stdscr.addstr(3, 2, f"Publisht auf: {', '.join(status['publishes'])}")
+
+                stdscr.addstr(5, 2, "=== Einstellungen ===")
+                stdscr.addstr(6, 4, f"Modus: {status['mode']}")
+                stdscr.addstr(7, 4, f"Ausgewähltes Gelenk: {status['selected_joint']}")
+                stdscr.addstr(8, 4, f"Geschwindigkeit: {status['velocity']:.3f}")
+
+                stdscr.addstr(10, 2, "=== Steuerung ===")
+                stdscr.addstr(11, 4, "Pfeiltasten : Bewegung")
+                stdscr.addstr(12, 4, "Leertaste: Notfall-Stop")
+                stdscr.addstr(13, 4, "M: Modus wechseln (Joint/Twist)")
+                stdscr.addstr(14, 4, "1-6: Joint wählen")
+                stdscr.addstr(15, 4, "PageUp/PageDown: Geschwindigkeit anpassen")
+                stdscr.addstr(16, 4, "ESC: Beenden")
+
+                stdscr.addstr(18, 2, "=== Aktive Tasten (letzte 200 ms) ===")
+                keys = status['active_keys']
+                if keys:
+                    # show readable names for arrow/home/end if present
+                    readable = []
+                    for kk in keys:
+                        if kk == curses.KEY_UP:
+                            readable.append("UP")
+                        elif kk == curses.KEY_DOWN:
+                            readable.append("DOWN")
+                        elif kk == curses.KEY_LEFT:
+                            readable.append("LEFT")
+                        elif kk == curses.KEY_RIGHT:
+                            readable.append("RIGHT")
+                        elif kk == curses.KEY_HOME:
+                            readable.append("HOME")
+                        elif kk == curses.KEY_END:
+                            readable.append("END")
+                        else:
+                            # printable?
+                            try:
+                                ch = chr(kk)
+                                if ch.isprintable():
+                                    readable.append(ch)
+                                else:
+                                    readable.append(str(kk))
+                            except Exception:
+                                readable.append(str(kk))
+                    stdscr.addstr(19, 4, ", ".join(readable))
+                else:
+                    stdscr.addstr(19, 4, "—")
+
+                stdscr.refresh()
+                last_status_update = now
+
+            # small sleep to avoid busy loop
+            time.sleep(0.01)
+
+    finally:
+        # on exit make sure robot stops
+        node.get_logger().info("Exiting UI, sending stops...")
+        node.stop_all()
+
 
 def main():
-    # Save terminal settings
-    old_settings = termios.tcgetattr(sys.stdin)
-    
+    rclpy.init()
+    node = KeyboardMoveSample()
+
+    # start rclpy.spin in background thread
+    spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+    spin_thread.start()
+
+    # Run curses UI in main thread
     try:
-        # Configure terminal
-        tty.setcbreak(sys.stdin.fileno())
-        
-        rclpy.init()
-        node = KeyboardMoveSample()
-        node.print_state()  # Initial state display
-        
-        # Create a thread for ROS spinning
-        spin_thread = threading.Thread(target=rclpy.spin, args=(node,))
-        spin_thread.daemon = True
-        spin_thread.start()
-        
-        # Create a timer for status updates (every 0.5 seconds)
-        def update_status():
-            while rclpy.ok():
-                node.print_state()
-                time.sleep(0.5)
-        
-        # Start status update thread
-        status_thread = threading.Thread(target=update_status)
-        status_thread.daemon = True
-        status_thread.start()
-        
-        try:
-            # Keep the main thread alive and handle terminal input
-            while rclpy.ok():
-                # Check if terminal is active
-                if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
-                    char = sys.stdin.read(1)
-                    if char == '\x03':  # Ctrl+C
-                        break
-                    # Handle terminal input here if needed
-                    
-        except KeyboardInterrupt:
-            node.cleanup_before_exit()
-    
+        curses.wrapper(curses_main, node)
+    except KeyboardInterrupt:
+        pass
     finally:
-        # Restore terminal settings
-        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+        # Cleanup
+        node.get_logger().info("Shutting down node...")
+        try:
+            node.cleanup_before_exit  # keep existence; if you implemented cleanup_before_exit, call it
+        except Exception:
+            pass
+        node.stop_all()
         node.destroy_node()
         rclpy.shutdown()
-        os.system('clear')
         print("Roboter-Steuerung beendet.")
+
 
 if __name__ == '__main__':
     main()

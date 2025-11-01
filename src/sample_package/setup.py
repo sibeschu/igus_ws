@@ -17,6 +17,8 @@ setup(
         'geometry_msgs',
         'control_msgs',
         'std_srvs',
+        'scipy',
+        'transforms3d',
     ],
     zip_safe=True,
     maintainer='pc',
@@ -30,6 +32,7 @@ setup(
         'console_scripts': [
             'keyboard_move_sample = sample_package.keyboard_move_sample:main',
             'test = sample_package.test:main',
+            'roboter_template = sample_package.roboter_template:main',
         ],
     },
 )

@@ -13,13 +13,13 @@ Dieser Template enthält:
 
 import rclpy
 from rclpy.node import Node
-from rclpy.duration import Duration
-from moveit.core.robot_state import RobotState
-from moveit.planning import MoveItPy
-from geometry_msgs.msg import Pose, Point, Quaternion
-from tf_transformations import euler_from_quaternion, quaternion_from_euler
+from geometry_msgs.msg import PoseStamped
+from scipy.spatial.transform import Rotation
 from math import pi
 import time
+
+# MoveItPy Imports
+from moveit.planning import MoveItPy
 
 class RoboterTemplate(Node):
     def __init__(self):
@@ -28,19 +28,29 @@ class RoboterTemplate(Node):
         """
         super().__init__('roboter_template')
         
-        # MoveIt Initialisierung
-        self.moveit = MoveItPy(node_name="roboter_template")
-        self.planning_group = self.moveit.get_planning_component("rebel_arm")
-        
-        # Timeout für Bewegungen (in Sekunden)
-        self.movement_timeout = 10.0
-        
-        # Prüfe ob der Roboter bereit ist
-        if not self._check_robot_ready():
-            self.get_logger().error("Roboter nicht bereit! Bitte überprüfen Sie die Verbindung.")
-            return
-        
-        self.get_logger().info("Roboter erfolgreich initialisiert!")
+        try:
+            # MoveIt Initialisierung
+            self.get_logger().info("Initialisiere MoveIt...")
+            self.moveit = MoveItPy(node_name="roboter_template")
+            self.robot_model = self.moveit.get_robot_model()
+            
+            # Planning Group für den Arm
+            self.arm_group_name = "rebel_arm"
+            self.arm = self.moveit.get_planning_component(self.arm_group_name)
+            
+            # Timeout für Bewegungen (in Sekunden)
+            self.movement_timeout = 10.0
+            
+            # Prüfe ob der Roboter bereit ist
+            if not self._check_robot_ready():
+                self.get_logger().error("Roboter nicht bereit! Bitte überprüfen Sie die Verbindung.")
+                return
+            
+            self.get_logger().info("Roboter erfolgreich initialisiert!")
+            
+        except Exception as e:
+            self.get_logger().error(f"Fehler bei der Initialisierung: {str(e)}")
+            raise
 
     def _check_robot_ready(self):
         """
@@ -99,7 +109,8 @@ class RoboterTemplate(Node):
             target_pose.position = Point(x=x, y=y, z=z)
             
             # Konvertiere Euler-Winkel in Quaternion
-            q = quaternion_from_euler(roll, pitch, yaw)
+            rotation = R.from_euler('xyz', [roll, pitch, yaw])
+            q = rotation.as_quat()  # Returns [x, y, z, w]
             target_pose.orientation = Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])
             
             # Prüfe ob Position erreichbar ist
