@@ -290,7 +290,7 @@ def student_program():
     move_to_home()
     
     # Beispiel: Fahre zu einer Position (Greifer nach unten zeigend)
-    # move_to_pose(0.3, 0.0, 0.35, 0.0, pi/2, 0.0)
+    move_to_pose(0.3, 0.0, 0.35, 0.0, pi/2, 0.0)
     
     # ▲▲▲ DEIN CODE ENDE ▲▲▲
     
