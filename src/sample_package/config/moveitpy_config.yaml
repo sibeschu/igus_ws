@@ -1,0 +1,51 @@
+# MoveItPy Configuration for Igus Rebel Robot Template
+
+# Robot description and semantic description
+robot_description_semantic:
+  file_package: igus_rebel_moveit_config
+  file_path: config/igus_rebel.srdf
+
+robot_description_planning:
+  file_package: igus_rebel_moveit_config
+  file_path: config/ompl_planning.yaml
+
+robot_description_kinematics:
+  file_package: igus_rebel_moveit_config
+  file_path: config/kinematics.yaml
+
+robot_description:
+  file_package: igus_rebel_description
+  file_path: urdf/igus_rebel.urdf.xacro
+
+# Planning pipeline
+planning_pipelines:
+  - ompl
+
+# OMPL planning
+ompl_rrtconnect:
+  planning_plugin: ompl_interface/OMPLPlanner
+  planning_type: geometric::RRTConnect
+  max_planning_time: 5.0
+
+# Planning scene monitor options
+planning_scene_monitor_options:
+  name: planning_scene_monitor
+  robot_description: robot_description
+  joint_state_topic: /joint_states
+  attached_collision_object_topic: /attached_collision_object
+  publish_planning_scene_topic: /publish_planning_scene
+  monitored_planning_scene_topic: /monitored_planning_scene
+  wait_for_initial_state_timeout: 10.0
+
+# Trajectory execution options
+trajectory_execution:
+  allowed_execution_duration_scaling: 1.2
+  allowed_goal_duration_margin: 0.5
+  allowed_start_tolerance: 0.01
+
+# Planning scene options
+planning_scene:
+  publish_planning_scene: true
+  publish_geometry_updates: true
+  publish_state_updates: true
+  publish_transforms_updates: true

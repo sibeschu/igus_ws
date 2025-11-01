@@ -1,4 +1,6 @@
 from setuptools import find_packages, setup
+import os
+from glob import glob
 
 package_name = 'sample_package'
 
@@ -10,6 +12,8 @@ setup(
         ('share/ament_index/resource_index/packages',
          ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
     ],
     install_requires=[
         'setuptools',
@@ -32,7 +36,9 @@ setup(
         'console_scripts': [
             'keyboard_move_sample = sample_package.keyboard_move_sample:main',
             'test = sample_package.test:main',
-            'roboter_template = sample_package.roboter_template:main',
+            'roboter_template = sample_package.roboter_template_action:main',
+            'roboter_template_moveitpy = sample_package.roboter_template:main',
+            'student_template = sample_package.student_template:main',
         ],
     },
 )

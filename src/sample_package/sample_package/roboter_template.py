@@ -17,6 +17,12 @@ from geometry_msgs.msg import PoseStamped
 from scipy.spatial.transform import Rotation
 from math import pi
 import time
+import os
+from pathlib import Path
+from ament_index_python.packages import get_package_share_directory
+from launch.substitutions import Command, FindExecutable, PathJoinSubstitution
+from launch_ros.substitutions import FindPackageShare
+from launch_param_builder import load_yaml
 
 # MoveItPy Imports
 from moveit.planning import MoveItPy
@@ -25,13 +31,87 @@ class RoboterTemplate(Node):
     def __init__(self):
         """
         Initialisiert den Roboter und alle notwendigen Verbindungen
+        
+        WICHTIG: Vor dem Ausführen dieses Templates muss move_group gestartet sein:
+        Terminal 1: ros2 launch igus_rebel_moveit_config move_group.launch.py
+        Terminal 2: ros2 run sample_package roboter_template
         """
         super().__init__('roboter_template')
         
         try:
             # MoveIt Initialisierung
             self.get_logger().info("Initialisiere MoveIt...")
-            self.moveit = MoveItPy(node_name="roboter_template")
+            self.get_logger().info("Lade MoveIt Konfigurationsdateien...")
+            
+            # Lade alle benötigten Konfigurationsdateien
+            moveit_config_pkg = get_package_share_directory('igus_rebel_moveit_config')
+            description_pkg = get_package_share_directory('igus_rebel_description')
+            
+            # Lade URDF
+            import subprocess
+            urdf_file = os.path.join(description_pkg, 'urdf', 'igus_rebel_robot2.urdf.xacro')
+            robot_description = subprocess.check_output([
+                'xacro', urdf_file, 'hardware_protocol:=rebel'
+            ]).decode('utf-8')
+            
+            # Lade SRDF
+            srdf_file = os.path.join(moveit_config_pkg, 'config', 'igus_rebel2.srdf')
+            with open(srdf_file, 'r') as f:
+                robot_description_semantic = f.read()
+            
+            # Lade andere Konfigurationen
+            kinematics_file = os.path.join(moveit_config_pkg, 'config', 'kinematics.yaml')
+            kinematics_config = load_yaml(Path(kinematics_file))
+            
+            ompl_file = os.path.join(moveit_config_pkg, 'config', 'ompl_planning.yaml')
+            ompl_config = load_yaml(Path(ompl_file))
+            
+            joint_limits_file = os.path.join(moveit_config_pkg, 'config', 'joint_limits.yaml')
+            joint_limits_config = load_yaml(Path(joint_limits_file))
+            
+            # Erstelle MoveItPy Konfiguration mit korrekter Struktur
+            # Die planning pipeline Konfiguration muss im richtigen Format sein
+            config_dict = {
+                "robot_description": robot_description,
+                "robot_description_semantic": robot_description_semantic,
+                "robot_description_kinematics": kinematics_config,
+                "robot_description_planning": joint_limits_config,
+                "planning_pipelines": {
+                    "pipeline_names": ["ompl"],
+                    "default_pipeline": "ompl"
+                },
+                "ompl": {
+                    "planning_plugin": "ompl_interface/OMPLPlanner",
+                    "request_adapters": """default_planning_request_adapters/ResolveConstraintFrames \
+                                          default_planning_request_adapters/ValidateWorkspaceBounds \
+                                          default_planning_request_adapters/CheckStartStateBounds \
+                                          default_planning_request_adapters/CheckStartStateCollision""",
+                    "response_adapters": """default_planning_response_adapters/AddTimeOptimalParameterization \
+                                           default_planning_response_adapters/ValidateSolution \
+                                           default_planning_response_adapters/DisplayMotionPath""",
+                    "start_state_max_bounds_error": 0.1,
+                },
+                "planning_scene_monitor_options": {
+                    "name": "planning_scene_monitor",
+                    "robot_description": "robot_description",
+                    "joint_state_topic": "/joint_states",
+                    "attached_collision_object_topic": "/attached_collision_object",
+                    "publish_planning_scene_topic": "/publish_planning_scene",
+                    "monitored_planning_scene_topic": "/monitored_planning_scene",
+                    "wait_for_initial_state_timeout": 10.0,
+                },
+            }
+            
+            # Füge Planner-Konfigurationen hinzu
+            if "planner_configs" in ompl_config:
+                config_dict["ompl"]["planner_configs"] = ompl_config["planner_configs"]
+            
+            # Füge Arm-Gruppe Konfiguration hinzu
+            if "igus_rebel_arm" in ompl_config:
+                config_dict["ompl"]["igus_rebel_arm"] = ompl_config["igus_rebel_arm"]
+            
+            self.get_logger().info("Initialisiere MoveItPy mit Konfiguration...")
+            self.moveit = MoveItPy(node_name="roboter_template", config_dict=config_dict)
             self.robot_model = self.moveit.get_robot_model()
             
             # Planning Group für den Arm

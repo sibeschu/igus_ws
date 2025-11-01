@@ -7,6 +7,15 @@
   <maintainer email="pc@todo.todo">pc</maintainer>
   <license>TODO: License declaration</license>
 
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>control_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>moveit_ros_planning_interface</depend>
+  <depend>igus_rebel_moveit_config</depend>
+  <depend>igus_rebel_description</depend>
+  <exec_depend>launch_param_builder</exec_depend>
+
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
