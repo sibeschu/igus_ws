@@ -162,6 +162,9 @@ class RobotController(Node):
         motion_request = MotionPlanRequest()
         motion_request.group_name = PLANNING_GROUP
         motion_request.goal_constraints = [goal_constraints]
+
+        motion_request.max_velocity_scaling_factor = 0.3
+        motion_request.max_acceleration_scaling_factor = 0.3
         
         # 5) Planning Options (plan + execute)
         planning_options = PlanningOptions(plan_only=False)
@@ -172,32 +175,56 @@ class RobotController(Node):
             planning_options=planning_options
         )
         
-        # 7) Sende Goal an MoveGroup
-        self.get_logger().info("Sende Goal an MoveGroup...")
-        send_future = self.client.send_goal_async(move_group_goal)
-        rclpy.spin_until_future_complete(self, send_future)
+        # 7) Sende Goal an MoveGroup (async mit Spinning)
+        try:
+            self.get_logger().info("Sende Goal an MoveGroup...")
+            send_goal_future = self.client.send_goal_async(move_group_goal)
+            
+            # Warte auf Goal Acceptance (mit Spinning für Nachrichtenverarbeitung)
+            rclpy.spin_until_future_complete(self, send_goal_future)
+            goal_handle = send_goal_future.result()
+            
+            if not goal_handle.accepted:
+                raise RuntimeError("Goal wurde vom Server abgelehnt!")
+            
+            self.get_logger().info("Goal akzeptiert, warte auf Ausführung...")
+            
+            # Warte auf Ergebnis (mit Spinning)
+            result_future = goal_handle.get_result_async()
+            rclpy.spin_until_future_complete(self, result_future)
+            result = result_future.result()
+            
+            # SUCCESS = 1 (moveit_msgs/MoveItErrorCodes)
+            if result.result.error_code.val != 1:
+                raise RuntimeError(f"Bewegung fehlgeschlagen! Error Code: {result.result.error_code.val}")
+            
+            self.get_logger().info("✓ Bewegung erfolgreich!")
+            return True
+            
+        except Exception as e:
+            self.get_logger().error(f"Fehler: {e}")
+            raise
+        #goal_handle = send_future.result()
+        #if not goal_handle.accepted:
+        #    self.get_logger().error("Goal wurde abgelehnt!")
+        #    return False
         
-        goal_handle = send_future.result()
-        if not goal_handle.accepted:
-            self.get_logger().error("Goal wurde abgelehnt!")
-            return False
-        
-        self.get_logger().info("Warte auf Ausführung...")
+        #self.get_logger().info("Warte auf Ausführung...")
         
         # 8) Warte auf Ergebnis
-        result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future)
-        result = result_future.result().result
+        # result_future = goal_handle.get_result_async()
+        # rclpy.spin_until_future_complete(self, result_future)
+        # result = result_future.result().result
         
         # SUCCESS = 1 (moveit_msgs/MoveItErrorCodes)
-        success = (result.error_code.val == 1)
+        #success = (result.error_code.val == 1)
         
-        if success:
-            self.get_logger().info("Bewegung erfolgreich!")
-        else:
-            self.get_logger().error(f"Fehler! Error Code: {result.error_code.val}")
+        #if success:
+        #    self.get_logger().info("Bewegung erfolgreich!")
+        #else:
+        #    self.get_logger().error(f"Fehler! Error Code: {result.error_code.val}")
         
-        return success
+        #return send_future.result()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -287,9 +314,12 @@ def student_program():
     
     # Beispiel: Fahre zur Home-Position
     move_to_home()
+    print("Home erreicht!")
     
+    move_to_pose(0.3, 0.1, 0.4, 0.0, pi/2, 0.0)
+    print("Position 1 erreicht!")
     # Beispiel: Fahre zu einer Position (Greifer nach unten zeigend)
-    move_to_pose(0.3, 0.0, 0.35, 0.0, pi/2, 0.0)
+    # move_to_pose(0.3, 0.0, 0.35, 0.0, pi/2, 0.0)
     
     # ▲▲▲ DEIN CODE ENDE ▲▲▲
     
