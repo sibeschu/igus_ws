@@ -40,13 +40,10 @@ from shape_msgs.msg import SolidPrimitive
 from moveit_msgs.action import MoveGroup
 from moveit_msgs.msg import (
     Constraints, PositionConstraint, OrientationConstraint, BoundingVolume,
-    MotionPlanRequest, PlanningOptions, MoveItErrorCodes
+    MotionPlanRequest, PlanningOptions
 )
-from action_msgs.msg import GoalStatus
 from scipy.spatial.transform import Rotation
 from math import pi
-
-import time
 
 # ═══════════════════════════════════════════════════════════════════════════
 # KONFIGURATION
@@ -166,8 +163,8 @@ class RobotController(Node):
         motion_request.group_name = PLANNING_GROUP
         motion_request.goal_constraints = [goal_constraints]
 
-        motion_request.max_velocity_scaling_factor = 0.6
-        motion_request.max_acceleration_scaling_factor = 0.6
+        motion_request.max_velocity_scaling_factor = 0.3
+        motion_request.max_acceleration_scaling_factor = 0.3
         
         # 5) Planning Options (plan + execute)
         planning_options = PlanningOptions(plan_only=False)
@@ -184,11 +181,10 @@ class RobotController(Node):
             send_goal_future = self.client.send_goal_async(move_group_goal)
             
             # Warte auf Goal Acceptance (mit Spinning für Nachrichtenverarbeitung)
-            self.get_logger().info("Warte auf Goal Akzeptierung...")
             rclpy.spin_until_future_complete(self, send_goal_future)
             goal_handle = send_goal_future.result()
             
-            if goal_handle is None or not goal_handle.accepted:
+            if not goal_handle.accepted:
                 raise RuntimeError("Goal wurde vom Server abgelehnt!")
             
             self.get_logger().info("Goal akzeptiert, warte auf Ausführung...")
@@ -196,37 +192,15 @@ class RobotController(Node):
             # Warte auf Ergebnis (mit Spinning)
             result_future = goal_handle.get_result_async()
             rclpy.spin_until_future_complete(self, result_future)
-            result_response = result_future.result()
-
-            # Check action status
-            if result_response.status != GoalStatus.STATUS_SUCCEEDED:
-                error_msg = f"Action fehlgeschlagen! Status: {result_response.status}"
-                if result_response.status == GoalStatus.STATUS_ABORTED:
-                    error_msg += " (ABORTED)"
-                elif result_response.status == GoalStatus.STATUS_CANCELED:
-                    error_msg += " (CANCELED)"
-                raise RuntimeError(error_msg)
-
-            # Check MoveIt error code
-            moveit_error = result_response.result.error_code.val
-            if moveit_error != MoveItErrorCodes.SUCCESS:
-                raise RuntimeError(f"MoveIt Fehler! Error Code: {moveit_error}")
+            result = result_future.result()
             
-            if moveit_error == -4: 
-                self.get_logger().warning("Planning failed, robot may still be moving. Retrying in 1 second...")
-                time.sleep(1.0)
-                # Optionally: recursive retry with counter
-                raise RuntimeError("Planning failed - robot might still be in motion from previous command")
-
+            # SUCCESS = 1 (moveit_msgs/MoveItErrorCodes)
+            if result.result.error_code.val != 1:
+                raise RuntimeError(f"Bewegung fehlgeschlagen! Error Code: {result.result.error_code.val}")
+            
             self.get_logger().info("✓ Bewegung erfolgreich!")
-
-            # CRITICAL: Wait for physical motion to complete
-            # MoveIt returns success when trajectory is sent to controller,
-            # but robot needs time to physically reach the goal
-            time.sleep(0.5)  # Add settling time after each movement
-
             return True
-        
+            
         except Exception as e:
             self.get_logger().error(f"Fehler: {e}")
             raise
@@ -338,19 +312,12 @@ def student_program():
     
     # ▼▼▼ DEIN CODE HIER ▼▼▼
     
-    while True:
     # Beispiel: Fahre zur Home-Position
-        
-            move_to_home()
-            print("Home erreicht!")
-        
-            move_to_pose(0.3, 0.1, 0.4, 0.0, pi/2, 0.0)
-            print("Position 1 erreicht!")
-
-            move_to_pose(0.6, 0.0, 0.3, 0.0, pi/2, 0.0)
-            print("Position 2 erreicht!")
-
+    move_to_home()
+    print("Home erreicht!")
     
+    # move_to_pose(0.3, 0.1, 0.4, 0.0, pi/2, 0.0)
+    # print("Position 1 erreicht!")
     # Beispiel: Fahre zu einer Position (Greifer nach unten zeigend)
     # move_to_pose(0.3, 0.0, 0.35, 0.0, pi/2, 0.0)
     
