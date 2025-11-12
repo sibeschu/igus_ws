@@ -19,7 +19,20 @@ source /opt/ros/jazzy/setup.bash
 colcon build
 ```
 
+Die IP des Netzwerkadapters, der für die Verbindung mit dem Roboter genutzt wird muss sich im Netzwerk von 192.168.3.1 befinden.  
+Diese wird festgelegt in `igus_rebel_ros2/src/igus_rebel/include/Rebel.hpp` (Zeile 88)
+
 ## Einstiegspunkte
+
+Sourcen des Workspaces vom root-Ordner:  
+
+`source install/setup.bash`
+
+Starten der Simulation :  
+
+```bash
+ros2 launch igus_rebel_moveit_config igus_rebel_simulated.launch.py
+```
 
 ```bash
 src/
