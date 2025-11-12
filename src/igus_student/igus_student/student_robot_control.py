@@ -316,7 +316,7 @@ def student_program():
     move_to_home()
     print("Home erreicht!")
     
-    # move_to_pose(0.3, 0.1, 0.4, 0.0, pi/2, 0.0)
+    move_to_pose(0.3, 0.1, 0.4, 0.0, pi/2, 0.0)
     # print("Position 1 erreicht!")
     # Beispiel: Fahre zu einer Position (Greifer nach unten zeigend)
     # move_to_pose(0.3, 0.0, 0.35, 0.0, pi/2, 0.0)
