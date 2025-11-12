@@ -28,7 +28,9 @@ src/
 │   │   ├── __init__.py
 │   │   └── student_robot_control.py
 ```
-
+In `student_robot_control.py` können Anweisungen für den Igus geschrieben werden. 
+Mit `colcon build` den Workspace erneut bauen, um Änderungen zu übernehmen. 
+Ausführen mit `ros2 run igus_student student_robot_control`
 
 ## Dokumentationen und Sourcecode
 
