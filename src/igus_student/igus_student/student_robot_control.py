@@ -18,6 +18,11 @@ VERFÜGBARE FUNKTIONEN:
     - move_to_pose(x, y, z, roll, pitch, yaw) : Bewegt Roboter zu Position mit Orientierung
     - move_to_home()                           : Fährt zur Home-Position
 
+COLLISION OBJECTS:
+    - Definiert in STATIC_COLLISION_OBJECTS (siehe Konfiguration oben)
+    - Werden beim Start automatisch geladen
+    - Um neue Objekte hinzuzufügen, STATIC_COLLISION_OBJECTS bearbeiten
+
 KOORDINATEN:
     - x, y, z: Position in Metern (float)
     - roll, pitch, yaw: Orientierung in Radiant (float)
@@ -40,8 +45,9 @@ from shape_msgs.msg import SolidPrimitive
 from moveit_msgs.action import MoveGroup
 from moveit_msgs.msg import (
     Constraints, PositionConstraint, OrientationConstraint, BoundingVolume,
-    MotionPlanRequest, PlanningOptions
+    MotionPlanRequest, PlanningOptions, CollisionObject, PlanningScene
 )
+from moveit_msgs.srv import ApplyPlanningScene
 from scipy.spatial.transform import Rotation
 from math import pi
 
@@ -58,6 +64,30 @@ POSE_TOLERANCE_ROTATION = 0.05       # ~3 Grad
 # Home Position (sicher, mittig)
 HOME_POSITION = (0.4, 0.0, 0.40)        # x, y, z in Metern
 HOME_ORIENTATION = (pi, 0.0, 0.0)     # roll, pitch, yaw (Greifer nach unten)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STATISCHE COLLISION OBJECTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Definiere hier deine festen Collision Objects
+STATIC_COLLISION_OBJECTS = [
+    # Beispiel Tisch
+    {
+        'name': 'table',
+        'shape_type': 'box',
+        'dimensions': [1.2, 0.8, 0.02],  # [width, depth, height] in Metern
+        'position': (0.5, 0.0, -0.02),   # (x, y, z) - z so dass Oberseite bei z=0
+        'orientation': (0.0, 0.0, 0.0, 1.0)  # (x, y, z, w) Quaternion - MUSS Float sein!
+    },
+    # Weitere Objekte hier hinzufügen:
+    # {
+    #     'name': 'wall',
+    #     'shape_type': 'box', 
+    #     'dimensions': [0.1, 2.0, 1.0],
+    #     'position': (0.8, 0.0, 0.5),
+    #     'orientation': (0.0, 0.0, 0.0, 1.0)
+    # }
+]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -79,13 +109,104 @@ class RobotController(Node):
             callback_group=self.callback_group
         )
         
+        # Service Client für Planning Scene
+        self.planning_scene_client = self.create_client(
+            ApplyPlanningScene,
+            "/apply_planning_scene",
+            callback_group=self.callback_group
+        )
+        
+        # Publisher für Planning Scene (alternative method)
+        self.planning_scene_publisher = self.create_publisher(
+            PlanningScene,
+            "/planning_scene",
+            10
+        )
+        
         # Warte auf MoveGroup Server
         self.get_logger().info("Warte auf MoveGroup Server...")
         if not self.client.wait_for_server(timeout_sec=10.0):
             self.get_logger().error("MoveGroup Server nicht erreichbar!")
             raise RuntimeError("MoveGroup Server nicht verfügbar")
         
+        # Warte auf Planning Scene Service
+        self.get_logger().info("Warte auf Planning Scene Service...")
+        if not self.planning_scene_client.wait_for_service(timeout_sec=5.0):
+            self.get_logger().warning("Planning Scene Service nicht verfügbar. Nutze Publisher stattdessen.")
+        
         self.get_logger().info("✓ Verbunden mit MoveGroup!")
+        
+        # Statische Collision Objects hinzufügen
+        self._add_static_collision_objects()
+    
+    def _add_static_collision_objects(self):
+        """Fügt alle statischen Collision Objects beim Start hinzu"""
+        try:
+            if not STATIC_COLLISION_OBJECTS:
+                self.get_logger().info("Keine statischen Collision Objects definiert")
+                return
+            
+            planning_scene = PlanningScene()
+            planning_scene.world.collision_objects = []
+            
+            for obj_config in STATIC_COLLISION_OBJECTS:
+                # Collision Object erstellen
+                collision_object = CollisionObject()
+                collision_object.header.frame_id = PLANNING_FRAME
+                collision_object.id = obj_config['name']
+                
+                # Shape definieren
+                primitive = SolidPrimitive()
+                shape_type = obj_config['shape_type']
+                
+                if shape_type == 'box':
+                    primitive.type = SolidPrimitive.BOX
+                    primitive.dimensions = [float(d) for d in obj_config['dimensions']]  # [x, y, z]
+                elif shape_type == 'sphere':
+                    primitive.type = SolidPrimitive.SPHERE
+                    primitive.dimensions = [float(d) for d in obj_config['dimensions']]  # [radius]
+                elif shape_type == 'cylinder':
+                    primitive.type = SolidPrimitive.CYLINDER
+                    primitive.dimensions = [float(d) for d in obj_config['dimensions']]  # [height, radius]
+                
+                # Position und Orientierung setzen
+                pose = PoseStamped()
+                pose.header.frame_id = PLANNING_FRAME
+                position = obj_config['position']
+                orientation = obj_config['orientation']
+                
+                pose.pose.position.x = float(position[0])
+                pose.pose.position.y = float(position[1])
+                pose.pose.position.z = float(position[2])
+                pose.pose.orientation.x = float(orientation[0])
+                pose.pose.orientation.y = float(orientation[1])
+                pose.pose.orientation.z = float(orientation[2])
+                pose.pose.orientation.w = float(orientation[3])
+                
+                collision_object.primitives = [primitive]
+                collision_object.primitive_poses = [pose.pose]
+                collision_object.operation = CollisionObject.ADD
+                
+                planning_scene.world.collision_objects.append(collision_object)
+                self.get_logger().info(f"✓ Statisches Collision Object '{obj_config['name']}' vorbereitet")
+            
+            # Alle Objekte gleichzeitig hinzufügen
+            planning_scene.is_diff = True
+            self.planning_scene_publisher.publish(planning_scene)
+            
+            # Kurz warten, damit die Nachricht verarbeitet wird
+            import time
+            time.sleep(0.5)  # Etwas länger warten für bessere Sichtbarkeit
+            
+            # Nochmals publizieren für bessere Zuverlässigkeit
+            self.planning_scene_publisher.publish(planning_scene)
+            time.sleep(0.1)
+            
+            self.get_logger().info(f"✓ {len(STATIC_COLLISION_OBJECTS)} statische Collision Objects hinzugefügt")
+            self.get_logger().info("📋 Objects sollten in RViz unter 'PlanningScene' > 'Scene Geometry' sichtbar sein")
+            
+        except Exception as e:
+            self.get_logger().error(f"Fehler beim Hinzufügen statischer Collision Objects: {e}")
     
     def _euler_to_quaternion(self, roll, pitch, yaw):
         """Konvertiert Euler-Winkel (roll, pitch, yaw) zu Quaternion (w, x, y, z)"""
@@ -143,7 +264,7 @@ class RobotController(Node):
         
         # 1) Konvertiere Euler zu Quaternion
         qw, qx, qy, qz = self._euler_to_quaternion(roll, pitch, yaw)
-      
+
         # 2) Erstelle Ziel-Pose
         goal_pose = PoseStamped()
         goal_pose.header.frame_id = PLANNING_FRAME
@@ -291,18 +412,20 @@ def student_program():
     - move_to_pose(x, y, z, roll, pitch, yaw)
     - move_to_home()
     
+    Collision Objects:
+    - Werden automatisch beim Start aus STATIC_COLLISION_OBJECTS geladen
+    - Um neue Objekte hinzuzufügen, bearbeite STATIC_COLLISION_OBJECTS oben
+    
     Beispiele:
     
-    # Beispiel 1: Zur Home-Position fahren
+    # Beispiel 1: Zur Home-Position fahren  
     move_to_home()
     
-    # Beispiel 2: Zu einer Position fahren (Greifer nach unten)
-    move_to_pose(0.3, 0.1, 0.4, 0.0, pi/2, 0.0)
+    # Beispiel 2: Um statische Hindernisse navigieren
+    move_to_pose(0.3, 0.4, 0.4, 0.0, pi/2, 0.0)  # Links um Tisch
+    move_to_pose(0.3, -0.4, 0.4, 0.0, pi/2, 0.0)  # Rechts um Tisch
     
-    # Beispiel 3: Mehrere Positionen nacheinander
-    move_to_pose(0.4, 0.0, 0.3, 0.0, pi/2, 0.0)
-    move_to_pose(0.4, 0.1, 0.3, 0.0, pi/2, 0.0)
-    move_to_pose(0.4, 0.0, 0.4, 0.0, pi/2, 0.0)
+    # MoveIt plant automatisch um alle definierten Collision Objects herum!
     
     """
     
@@ -312,14 +435,23 @@ def student_program():
     
     # ▼▼▼ DEIN CODE HIER ▼▼▼
     
+    # Statische Collision Objects wurden automatisch beim Start geladen
+    print("Collision Objects aus STATIC_COLLISION_OBJECTS sind aktiv!")
+    
     # Beispiel: Fahre zur Home-Position
     move_to_home()
     print("Home erreicht!")
     
-    move_to_pose(0.3, 0.1, 0.4, 0.0, pi/2, 0.0)
-    # print("Position 1 erreicht!")
-    # Beispiel: Fahre zu einer Position (Greifer nach unten zeigend)
-    # move_to_pose(0.3, 0.0, 0.35, 0.0, pi/2, 0.0)
+    # Beispiel: Bewege um den statischen Tisch herum
+    print("Bewege seitlich um den Tisch...")
+    move_to_pose(0.3, 0.4, 0.4, 0.0, pi/2, 0.0)  # Links um den Tisch
+    print("Position links vom Tisch erreicht!")
+    
+    move_to_pose(0.3, -0.4, 0.4, 0.0, pi/2, 0.0)  # Rechts um den Tisch
+    print("Position rechts vom Tisch erreicht!")
+    
+    # Zurück zur Home-Position
+    move_to_home()
     
     # ▲▲▲ DEIN CODE ENDE ▲▲▲
     
