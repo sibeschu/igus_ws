@@ -34,9 +34,9 @@ REFERENCE_FRAME = "world"
 
 POSITION_TOLERANCE = 0.01  # 10mm
 ORIENTATION_TOLERANCE = 0.05  # ~3 degrees
-VELOCITY_THRESHOLD = 0.01  # rad/s for "stopped" detection
+VELOCITY_THRESHOLD = 0.05
 
-HOME_POSITION = (0.4, 0.0, 0.3)
+HOME_POSITION = (0.4, 0.0, 0.3) # x, y, z
 HOME_ORIENTATION = (pi, 0.0, 0.0)  # roll, pitch, yaw
 
 # Static collision objects loaded at startup
@@ -136,7 +136,7 @@ class SimpleRobotController(Node):
             collision_obj.operation = CollisionObject.ADD
             
             scene.world.collision_objects.append(collision_obj)
-            self.get_logger().info(f"✓ Added collision object: {obj['name']}")
+            self.get_logger().info(f"Added collision object: {obj['name']}")
         
         # Publish scene
         self.scene_publisher.publish(scene)
@@ -144,7 +144,7 @@ class SimpleRobotController(Node):
         self.scene_publisher.publish(scene)
         time.sleep(0.1)
         
-        self.get_logger().info(f"✓ Loaded {len(COLLISION_OBJECTS)} collision objects")
+        self.get_logger().info(f"Loaded {len(COLLISION_OBJECTS)} collision objects")
     
     def is_moving(self):
         """Check if robot is currently moving"""
@@ -156,27 +156,26 @@ class SimpleRobotController(Node):
         max_velocity = np.max(np.abs(self.joint_velocities))
         return max_velocity > VELOCITY_THRESHOLD
     
-    def wait_until_stopped(self, timeout=3.0):
-        """Wait until robot stops moving"""
-        start_time = time.time()
-        time.sleep(0.2)
+    def wait_until_stopped(self):
+        """Wait indefinitely until robot stops moving (all joint velocities below threshold)"""
+        self.get_logger().info("Waiting for robot to stop...")
+        time.sleep(0.2)  # Initial delay to allow velocity data to arrive
         
-        while (time.time() - start_time) < timeout:
+        while True:
             rclpy.spin_once(self, timeout_sec=0.1)
             
+            # Wait for joint state data to be available
             if self.joint_velocities is None:
                 time.sleep(0.1)
                 continue
             
+            # Check if all joint velocities are below threshold
             max_velocity = np.max(np.abs(self.joint_velocities))
             if max_velocity <= VELOCITY_THRESHOLD:
-                self.get_logger().info("Robot stopped")
+                self.get_logger().info(f"Robot stopped (max velocity: {max_velocity:.4f} rad/s)")
                 return True
             
             time.sleep(0.1)
-        
-        self.get_logger().warning("Timeout waiting for robot to stop")
-        return False
     
     def move_to(self, x, y, z, roll, pitch, yaw):
         """
@@ -267,7 +266,7 @@ class SimpleRobotController(Node):
             # Check success
             error_code = result.result.error_code.val
             if error_code == 1:
-                self.get_logger().info("✓ Movement successful")
+                self.get_logger().info("Movement successful")
                 return True
             else:
                 # MoveIt error codes from moveit_msgs/msg/MoveItErrorCodes
@@ -331,9 +330,9 @@ def is_robot_moving():
     return _get_robot().is_moving()
 
 
-def wait_for_stop(timeout=3.0):
-    """Wait until robot stops moving"""
-    return _get_robot().wait_until_stopped(timeout)
+def wait_for_stop():
+    """Wait until robot stops moving (no timeout)"""
+    return _get_robot().wait_until_stopped()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -361,17 +360,17 @@ def main():
         # Move to home
         move_home()
         print("Reached home position")
-        time.sleep(1.0)
+        wait_for_stop()
         
         # Move to first position
         move_to_pose(0.4, 0.2, 0.3, pi, 0.0, 0.0)
         print("Reached position 1")
-        time.sleep(1.0)
+        wait_for_stop()
         
         # Move to second position
         move_to_pose(0.4, -0.2, 0.3, pi, 0.0, 0.0)
         print("Reached position 2")
-        time.sleep(1.0)
+        wait_for_stop()
         
         # Return home
         move_home()

@@ -24,7 +24,6 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'student_control = igus_student.student_robot_control:main',
             'simple_control = igus_student.simple_robot_control:main',
         ],
     },
