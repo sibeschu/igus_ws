@@ -79,6 +79,10 @@ class SimpleRobotController(Node):
             self._joint_state_callback, 10
         )
         
+        # Track if goal is currently executing
+        self.is_goal_executing = False
+        self.current_goal_handle = None
+        
         # Wait for MoveGroup server
         self.get_logger().info("Connecting to MoveGroup...")
         if not self.move_client.wait_for_server(timeout_sec=10.0):
@@ -156,26 +160,28 @@ class SimpleRobotController(Node):
         max_velocity = np.max(np.abs(self.joint_velocities))
         return max_velocity > VELOCITY_THRESHOLD
     
-    def wait_until_stopped(self):
-        """Wait indefinitely until robot stops moving (all joint velocities below threshold)"""
-        self.get_logger().info("Waiting for robot to stop...")
-        time.sleep(0.2)  # Initial delay to allow velocity data to arrive
+    def wait_until_stopped(self, timeout=5.0):
+        """Wait until robot stops moving"""
+        self.get_logger().info("Waiting for robot to stop")
+        start_time = time.time()
+        time.sleep(0.2)
         
-        while True:
+        while (time.time() - start_time) < timeout:
             rclpy.spin_once(self, timeout_sec=0.1)
             
-            # Wait for joint state data to be available
             if self.joint_velocities is None:
                 time.sleep(0.1)
                 continue
             
-            # Check if all joint velocities are below threshold
             max_velocity = np.max(np.abs(self.joint_velocities))
             if max_velocity <= VELOCITY_THRESHOLD:
-                self.get_logger().info(f"Robot stopped (max velocity: {max_velocity:.4f} rad/s)")
+                self.get_logger().info("Robot stopped")
                 return True
             
             time.sleep(0.1)
+        
+        self.get_logger().warning("Timeout waiting for robot to stop")
+        return False
     
     def move_to(self, x, y, z, roll, pitch, yaw):
         """
@@ -246,22 +252,37 @@ class SimpleRobotController(Node):
         )
         
         try:
+            # Check if already executing
+            if self.is_goal_executing:
+                self.get_logger().warning("Goal already executing! Waiting for completion...")
+                return False
+            
             # Send goal
             self.get_logger().info("Sending goal to MoveGroup...")
+            self.is_goal_executing = True
+            
             send_future = self.move_client.send_goal_async(goal)
             rclpy.spin_until_future_complete(self, send_future)
             
             goal_handle = send_future.result()
+            self.current_goal_handle = goal_handle
+            
             if not goal_handle.accepted:
                 self.get_logger().error("Goal rejected by server")
+                self.is_goal_executing = False
+                self.current_goal_handle = None
                 return False
             
             self.get_logger().info("Goal accepted, executing...")
             
-            # Wait for result
+            # Wait for result - BLOCKS until execution complete
             result_future = goal_handle.get_result_async()
             rclpy.spin_until_future_complete(self, result_future)
             result = result_future.result()
+            
+            # Execution finished - reset state
+            self.is_goal_executing = False
+            self.current_goal_handle = None
             
             # Check success
             error_code = result.result.error_code.val
@@ -298,7 +319,13 @@ class SimpleRobotController(Node):
                 
         except Exception as e:
             self.get_logger().error(f"Exception during movement: {e}")
+            self.is_goal_executing = False
+            self.current_goal_handle = None
             return False
+    
+    def is_executing_goal(self):
+        """Check if a goal is currently being executed"""
+        return self.is_goal_executing
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -330,9 +357,14 @@ def is_robot_moving():
     return _get_robot().is_moving()
 
 
-def wait_for_stop():
-    """Wait until robot stops moving (no timeout)"""
-    return _get_robot().wait_until_stopped()
+def is_executing_goal():
+    """Check if a MoveIt goal is currently being executed"""
+    return _get_robot().is_executing_goal()
+
+
+def wait_for_stop(timeout=3.0):
+    """Wait until robot stops moving"""
+    return _get_robot().wait_until_stopped(timeout)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
