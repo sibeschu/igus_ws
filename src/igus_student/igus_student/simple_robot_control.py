@@ -179,7 +179,7 @@ class SimpleRobotController(Node):
         self.get_logger().warning(f"Timeout waiting for settle (last vel={last_vel:.3f})")
         return False
 
-    def move_to(self, x, y, z, roll, pitch, yaw):
+    def safe_move_to(self, x, y, z, roll, pitch, yaw):
         """
         Move robot end-effector to target pose
         
@@ -287,6 +287,8 @@ class SimpleRobotController(Node):
             if error_code == MoveItErrorCodes.SUCCESS:
                 self.get_logger().info("Movement successful")
                 # wait for physical settling
+                self.get_logger().info("Waiting for robot to settle...")
+
                 self.wait_until_stopped(timeout=5.0, stable_time=1)
                 return True
             else:
@@ -340,16 +342,16 @@ def _get_robot():
     return _robot
 
 
-def move_to_pose(x, y, z, roll, pitch, yaw):
+def safe_move_to_pose(x, y, z, roll, pitch, yaw):
     """Move robot to target pose"""
-    return _get_robot().move_to(x, y, z, roll, pitch, yaw)
+    return _get_robot().safe_move_to(x, y, z, roll, pitch, yaw)
 
 
 def move_home():
     """Move to home position"""
     x, y, z = HOME_POSITION
     roll, pitch, yaw = HOME_ORIENTATION
-    return move_to_pose(x, y, z, roll, pitch, yaw)
+    return safe_move_to_pose(x, y, z, roll, pitch, yaw)
 
 
 def is_robot_moving():
@@ -393,20 +395,20 @@ def main():
         print("Reached home position")
         
         # Move to first position - automatically waits
-        move_to_pose(0.4, 0.2, 0.3, pi, 0.0, 0.0)
+        safe_move_to_pose(0.4, 0.2, 0.3, pi, 0.0, 0.0)
         print("Reached position 1")
         
         # Move to second position - automatically waits
-        move_to_pose(0.4, -0.2, 0.3, pi, 0.0, 0.0)
+        safe_move_to_pose(0.4, -0.2, 0.3, pi, 0.0, 0.0)
         print("Reached position 2")
 
-        move_to_pose(0.4, 0.0, 0.1, pi, 0.0, 0.0)
+        safe_move_to_pose(0.4, 0.0, 0.1, pi, 0.0, 0.0)
         print("Reached position 3")
 
-        move_to_pose(0.4, 0.1, 0.1, pi, 0.0, 0.0)
+        safe_move_to_pose(0.4, 0.1, 0.1, pi, 0.0, 0.0)
         print("Reached position 4")
 
-        move_to_pose(0.4, -0.3, 0.1, pi, 0.0, 0.0)
+        safe_move_to_pose(0.4, -0.3, 0.1, pi, 0.0, 0.0)
         print("Reached position 5")
 
         # Return home - automatically waits
