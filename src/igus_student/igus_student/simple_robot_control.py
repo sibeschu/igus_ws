@@ -19,8 +19,9 @@ from moveit_msgs.action import MoveGroup
 from moveit_msgs.msg import (
     Constraints, PositionConstraint, OrientationConstraint, 
     BoundingVolume, MotionPlanRequest, PlanningOptions,
-    CollisionObject, PlanningScene
+    CollisionObject, PlanningScene, MoveItErrorCodes
 )
+from action_msgs.msg import GoalStatus
 from scipy.spatial.transform import Rotation
 
 
@@ -56,7 +57,6 @@ COLLISION_OBJECTS = [
 # ═══════════════════════════════════════════════════════════════════════════
 
 class SimpleRobotController(Node):
-    
     def __init__(self):
         super().__init__("simple_robot_controller")
         self.callback_group = ReentrantCallbackGroup()
@@ -98,6 +98,10 @@ class SimpleRobotController(Node):
         if msg.velocity and len(msg.velocity) > 0:
             self.joint_velocities = np.array(msg.velocity)
     
+  
+
+
+
     def _add_collision_objects(self):
         """Add all static collision objects to planning scene"""
         if not COLLISION_OBJECTS:
@@ -145,63 +149,36 @@ class SimpleRobotController(Node):
         # Publish scene
         self.scene_publisher.publish(scene)
         time.sleep(0.5)
-        self.scene_publisher.publish(scene)
-        time.sleep(0.1)
         
         self.get_logger().info(f"Loaded {len(COLLISION_OBJECTS)} collision objects")
-    
+
     def is_moving(self):
-        """Check if robot is currently moving"""
-        rclpy.spin_once(self, timeout_sec=0.1)
-        
+        """Check if robot is currently moving (no internal spin)"""
         if self.joint_velocities is None:
             return False
-        
-        max_velocity = np.max(np.abs(self.joint_velocities))
-        return max_velocity > VELOCITY_THRESHOLD
-    
-    def wait_until_stopped(self, timeout=5.0, stable_time=1):
-        """
-        Wait until robot stops moving and remains stable
-        
-        Args:
-            timeout: Maximum time to wait
-            stable_time: How long velocities must be below threshold
-        """
-        self.get_logger().info("Waiting for robot to stop")
-        start_time = time.time()
-        stable_start = None
-        
-        # First, wait for trajectory to actually complete execution
-        # (MoveIt may return before controller finishes)
-        time.sleep(0.5)
-        
-        while (time.time() - start_time) < timeout:
-            rclpy.spin_once(self, timeout_sec=0.1)
-            
+        return np.max(np.abs(self.joint_velocities)) > VELOCITY_THRESHOLD
+
+    def wait_until_stopped(self, timeout=5.0, vel_thresh=VELOCITY_THRESHOLD, stable_time=0.5):
+        """Block until velocities below threshold for stable_time or timeout."""
+        start = time.time()
+        stable_since = None
+        last_vel = None
+        while time.time() - start < timeout:
+            rclpy.spin_once(self, timeout_sec=0.05)
             if self.joint_velocities is None:
-                time.sleep(0.1)
                 continue
-            
-            max_velocity = np.max(np.abs(self.joint_velocities))
-            
-            if max_velocity <= VELOCITY_THRESHOLD:
-                # Velocity below threshold
-                if stable_start is None:
-                    stable_start = time.time()
-                elif (time.time() - stable_start) >= stable_time:
-                    # Stable for required duration
-                    self.get_logger().info(f"Robot stopped (stable for {stable_time}s)")
+            last_vel = np.max(np.abs(self.joint_velocities))
+            if last_vel < vel_thresh:
+                if stable_since is None:
+                    stable_since = time.time()
+                if time.time() - stable_since >= stable_time:
+                    self.get_logger().info(f"Robot settled (vel={last_vel:.3f})")
                     return True
             else:
-                # Velocity above threshold, reset stability timer
-                stable_start = None
-            
-            time.sleep(0.05)
-        
-        self.get_logger().warning(f"Timeout waiting for robot to stop (max vel: {max_velocity:.4f})")
+                stable_since = None
+        self.get_logger().warning(f"Timeout waiting for settle (last vel={last_vel:.3f})")
         return False
-    
+
     def move_to(self, x, y, z, roll, pitch, yaw):
         """
         Move robot end-effector to target pose
@@ -261,6 +238,8 @@ class SimpleRobotController(Node):
             position_constraints=[position_constraint],
             orientation_constraints=[orientation_constraint]
         )]
+
+        # Max speeds
         motion_request.max_velocity_scaling_factor = 0.2
         motion_request.max_acceleration_scaling_factor = 0.2
         
@@ -295,22 +274,20 @@ class SimpleRobotController(Node):
             self.get_logger().info("Goal accepted, executing...")
             
             # Wait for result - BLOCKS until execution complete
+            self.get_logger().info("Waiting for result...")
             result_future = goal_handle.get_result_async()
             rclpy.spin_until_future_complete(self, result_future)
             result = result_future.result()
-            
-            # Execution finished - reset state
+
+            # Reset execution state
             self.is_goal_executing = False
             self.current_goal_handle = None
-            
-            # Check success
+
             error_code = result.result.error_code.val
-            if error_code == 1:
+            if error_code == MoveItErrorCodes.SUCCESS:
                 self.get_logger().info("Movement successful")
-                
-                # Wait for robot to fully settle after trajectory execution
-                self.wait_until_stopped(timeout=5.0, stable_time=1.0)
-                
+                # wait for physical settling
+                self.wait_until_stopped(timeout=5.0, stable_time=1)
                 return True
             else:
                 # MoveIt error codes from moveit_msgs/msg/MoveItErrorCodes
@@ -339,7 +316,7 @@ class SimpleRobotController(Node):
                 msg = error_messages.get(error_code, f"Unknown error code {error_code}")
                 self.get_logger().error(f"Movement failed: {msg}")
                 return False
-                
+
         except Exception as e:
             self.get_logger().error(f"Exception during movement: {e}")
             self.is_goal_executing = False
@@ -422,7 +399,16 @@ def main():
         # Move to second position - automatically waits
         move_to_pose(0.4, -0.2, 0.3, pi, 0.0, 0.0)
         print("Reached position 2")
-        
+
+        move_to_pose(0.4, 0.0, 0.1, pi, 0.0, 0.0)
+        print("Reached position 3")
+
+        move_to_pose(0.4, 0.1, 0.1, pi, 0.0, 0.0)
+        print("Reached position 4")
+
+        move_to_pose(0.4, -0.3, 0.1, pi, 0.0, 0.0)
+        print("Reached position 5")
+
         # Return home - automatically waits
         move_home()
         print("Returned home")
